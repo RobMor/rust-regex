@@ -1,5 +1,5 @@
 [package]
-name = "basic_regex"
+name = "rust_regex"
 version = "0.1.0"
 authors = ["Robert Morrison <robbieguy98@gmail.com>"]
 edition = "2018"
