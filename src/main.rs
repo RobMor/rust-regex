@@ -1,18 +1,26 @@
-enum NFA {
-    CharNode(char),
-    OrNode(Box<NFA>, Box<NFA>),
-    StarNode(Box<NFA>),
-    SeqNode(Box<NFA>, Box<NFA>),
+use std::iter;
+
+struct State(usize);
+
+#[derive(Debug, Copy, Clone)]
+enum Instruction {
+    Literal(char),
+    Split(usize),
+    Jump(isize),
+    Match,
 }
 
-impl NFA {
-    fn compile(pattern: &str) -> NFA {
-        let mut stack: Vec<NFA> = Vec::new();
+struct Regex {
+    instructions: Vec<Instruction>,
+}
+
+impl Regex {
+    pub fn compile(pattern: &str) -> Regex {
+        let mut stack: Vec<Vec<Instruction>> = Vec::new();
 
         // Example:
         // a(b|c)* => abc|*.
         // -----------------
-        // a -> [CharNode(a)]
         // a -> [CharNode(a)]
         // b -> [CharNode(a), CharNode(b)]
         // c -> [CharNode(a), CharNode(b), CharNode(c)]
@@ -22,58 +30,143 @@ impl NFA {
 
         for c in pattern.chars() {
             match c {
-                'A'...'z' => stack.push(NFA::CharNode(c)),
                 '|' => {
-                    let f = stack.pop().expect("Bad Pattern: Not Enough Values in Stack for Or");
-                    let s = stack.pop().expect("Bad Pattern: Not Enough Values in Stack for Or");
-                    stack.push(NFA::OrNode(Box::new(f), Box::new(s)));
-                },
-                '*' => {
-                    let f = stack.pop().expect("Bad Pattern: Not Enough Values in Stack for Star");
-                    stack.push(NFA::StarNode(Box::new(f)));
-                },
-                '.' => {
-                    let f = stack.pop().expect("Bad Pattern: Not Enough Values in Stack for Link");
-                    let s = stack.pop().expect("Bad Pattern: Not Enough Values in Stack for Link");
-                    stack.push(NFA::SeqNode(Box::new(f), Box::new(s)));
+                    let s = stack
+                        .pop()
+                        .expect("Bad Pattern: Not enough values in stack for Split");
+                    let f = stack
+                        .pop()
+                        .expect("Bad Pattern: Not enough values in stack for Split");
+
+                    // SPLIT
+                    // f
+                    // JUMP
+                    // s
+
+                    let n = iter::once(Instruction::Split(f.len() + 2))
+                        .chain(f.into_iter())
+                        .chain(iter::once(Instruction::Jump((s.len() + 1) as isize)))
+                        .chain(s.into_iter())
+                        .collect();
+
+                    stack.push(n);
                 }
-                _ => panic!("Bad Pattern: Unrecognized Character"),
+                '*' => {
+                    let f = stack
+                        .pop()
+                        .expect("Bad Pattern: Not Enough Values in Stack for Star");
+
+                    let l = f.len();
+
+                    // SPLIT
+                    // f
+                    // JUMP (back)
+
+                    let n = iter::once(Instruction::Split(l + 2))
+                        .chain(f.into_iter())
+                        .chain(iter::once(Instruction::Jump(-1 * (l + 1) as isize)))
+                        .collect();
+
+                    stack.push(n);
+                }
+                '.' => {
+                    let s = stack
+                        .pop()
+                        .expect("Bad Pattern: Not Enough Values in Stack for Link");
+                    let f = stack
+                        .pop()
+                        .expect("Bad Pattern: Not Enough Values in Stack for Link");
+
+                    // f
+                    // s
+                    
+                    let n = f.into_iter().chain(s.into_iter()).collect();
+
+                    stack.push(n);
+                }
+                c => {
+                    let n = vec![Instruction::Literal(c)];
+
+                    stack.push(n);
+                }
             }
         }
 
         assert_eq!(stack.len(), 1, "Bad Pattern: Faulty stack");
 
-        stack.pop().expect("Bad Pattern")
+        let mut instructions = stack.pop().unwrap();
+        instructions.push(Instruction::Match);
+
+        Regex {
+            instructions: instructions,
+        }
     }
 
-    fn check(&self, string: &str) -> &str {
-        match self {
-            NFA::CharNode(c) => {
-                match string.chars().next() {
-                    None => false,
-                    Some(p) => *c == p, // TODO why is c a ref here?
-                }
+    fn expand_state(&self, state: usize) -> Vec<usize> {
+        match self.instructions[state] {
+            Instruction::Literal(_) => {
+                vec![state]
             },
-            NFA::OrNode(l, r) => {
-                l.check(&string) || r.check(&string)
+            Instruction::Split(to) => {
+                let mut l = self.expand_state(state + 1);
+                let mut r = self.expand_state(state + to);
+
+                l.append(&mut r);
+
+                l
             },
-            NFA::StarNode(n) => {
-                let 
-                while n.check(&string[1..]) {}
-                true, i
+            Instruction::Jump(to) => {
+                self.expand_state((state as isize + to) as usize)
             },
-            NFA::SeqNode(l, r) => {
-                l.check(&string[1..]) && r.check(&string[1..])
+            Instruction::Match => {
+                vec![state]
             }
         }
     }
 
-    fn check(&self, )
+    pub fn is_match(&self, text: &str) -> bool {
+        let mut current_states: Vec<usize> = vec![0];
+        let mut next_states = Vec::new();
+        
+        for c in text.chars() {
+            for index in current_states.into_iter() {
+                match self.instructions[index] {
+                    Instruction::Literal(e) => {
+                        if e == c {
+                            let mut new_states = self.expand_state(index+1);
+                            next_states.append(&mut new_states);
+                        }
+                    },
+                    Instruction::Match => (),
+                    s => unreachable!("Unexpected state found in current states: {:?}", s),
+                }
+            }
+
+            current_states = next_states;
+            next_states = Vec::new();
+        }
+
+        for index in current_states.into_iter() {
+            if let Instruction::Match = self.instructions[index] {
+                return true
+            }
+        }
+
+        false
+    }
 }
 
 fn main() {
-    let exp = NFA::compile("abc|*.");
+    let exp = Regex::compile("abc|*.");
+    
+    println!("Resulting State Machine:");
 
-    assert!(exp.check("abccbbbccbb"));
-    assert!(!exp.check("abcd"));
+    for (pc, instr) in exp.instructions.iter().enumerate() {
+        println!("{}: {:?}", pc, instr);
+    }
+
+    println!("abc? {}", exp.is_match("abc"));
+    println!("abbc? {}", exp.is_match("abbc"));
+    println!("abcd? {}", exp.is_match("abcd"));
+    println!("abcbccccbcbcccbccbcbc? {}", exp.is_match("abcbccccbcbcccbccbcbc"));
 }
