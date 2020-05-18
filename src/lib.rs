@@ -1,7 +1,5 @@
 use std::iter;
 
-struct State(usize);
-
 #[derive(Debug, Copy, Clone)]
 enum Instruction {
     Literal(char),
@@ -10,7 +8,7 @@ enum Instruction {
     Match,
 }
 
-struct Regex {
+pub struct Regex {
     instructions: Vec<Instruction>,
 }
 
@@ -156,17 +154,22 @@ impl Regex {
     }
 }
 
-fn main() {
-    let exp = Regex::compile("abc|*.");
+#[cfg(test)]
+mod tests {
+    use super::*;
     
-    println!("Resulting State Machine:");
-
-    for (pc, instr) in exp.instructions.iter().enumerate() {
-        println!("{}: {:?}", pc, instr);
+    #[test]
+    fn compiles() {
+        Regex::compile("abc|*.");
     }
 
-    println!("abc? {}", exp.is_match("abc"));
-    println!("abbc? {}", exp.is_match("abbc"));
-    println!("abcd? {}", exp.is_match("abcd"));
-    println!("abcbccccbcbcccbccbcbc? {}", exp.is_match("abcbccccbcbcccbccbcbc"));
+    #[test]
+    fn matches() {
+        let regex = Regex::compile("abc|*.");
+
+        assert!(regex.is_match("ab"), "ab");
+        assert!(regex.is_match("abc"), "abc");
+        assert!(regex.is_match("abcb"), "abcb");
+        assert!(!regex.is_match("abcd"), "abcd");
+    }
 }
