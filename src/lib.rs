@@ -1,30 +1,31 @@
 use std::iter;
+use std::collections::HashSet;
 
+/// Regular expression instructions. Some instructions include integer offsets to other states.
+/// These offsets correspond to instructions at other indices in the 'code' and can simply be added
+/// to the current index to find the correct state.
 #[derive(Debug, Copy, Clone)]
 enum Instruction {
+    /// A character literal.
     Literal(char),
+    /// A split in the 'code'. The offset points to the start of the other split.
     Split(usize),
+    /// A jump in the 'code'. The offset points to the instruction to jump to.
     Jump(isize),
+    /// A match instruction. If the 'code' ends up at the end of the string in one of these states
+    /// the string is a match.
     Match,
 }
 
+/// A regular expression object to represent one regular expression
 pub struct Regex {
     instructions: Vec<Instruction>,
 }
 
 impl Regex {
+    /// Compiles a regular expression in 'Reverse Polish Form'.
     pub fn compile(pattern: &str) -> Regex {
         let mut stack: Vec<Vec<Instruction>> = Vec::new();
-
-        // Example:
-        // a(b|c)* => abc|*.
-        // -----------------
-        // a -> [CharNode(a)]
-        // b -> [CharNode(a), CharNode(b)]
-        // c -> [CharNode(a), CharNode(b), CharNode(c)]
-        // | -> [CharNode(a), OrNode(CharNode(b), CharNode(c))]
-        // * -> [CharNode(a), StarNode(OrNode(CharNode(b), CharNode(c)))]
-        // . -> [SeqNode(CharNode(a), StarNode(OrNode(CharNode(b), CharNode(c))))]
 
         for c in pattern.chars() {
             match c {
@@ -77,7 +78,7 @@ impl Regex {
 
                     // f
                     // s
-                    
+
                     let n = f.into_iter().chain(s.into_iter()).collect();
 
                     stack.push(n);
@@ -99,65 +100,45 @@ impl Regex {
             instructions: instructions,
         }
     }
-
-    fn expand_state(&self, state: usize) -> Vec<usize> {
+    
+    /// Expands a pointer to an instruction to a list of possible literal or match instructions.
+    ///
+    /// This is useful because when the matching algorithm finds a state like a jump it doesn't
+    /// know which characters that jump can actually match. Following these jumps recursively gives
+    /// us a list of possible literals that could be matched.
+    fn expand_state(&self, state: usize) -> HashSet<usize> {
         match self.instructions[state] {
-            Instruction::Literal(_) => {
-                vec![state]
-            },
+            Instruction::Literal(_) => [state].iter().cloned().collect(),
             Instruction::Split(to) => {
-                let mut l = self.expand_state(state + 1);
-                let mut r = self.expand_state(state + to);
+                let l = self.expand_state(state + 1);
+                let r = self.expand_state(state + to);
 
-                l.append(&mut r);
-
-                l
-            },
-            Instruction::Jump(to) => {
-                self.expand_state((state as isize + to) as usize)
-            },
-            Instruction::Match => {
-                vec![state]
+                l.union(&r).cloned().collect()
             }
+            Instruction::Jump(to) => self.expand_state((state as isize + to) as usize),
+            Instruction::Match => [state].iter().cloned().collect(),
         }
     }
-
+    
+    /// Check if the given text is a match on this regular expression
     pub fn is_match(&self, text: &str) -> bool {
-        let mut current_states: Vec<usize> = vec![0];
-        let mut next_states = Vec::new();
-        
-        for c in text.chars() {
-            for index in current_states.into_iter() {
-                match self.instructions[index] {
-                    Instruction::Literal(e) => {
-                        if e == c {
-                            let mut new_states = self.expand_state(index+1);
-                            next_states.append(&mut new_states);
-                        }
-                    },
-                    Instruction::Match => (),
-                    s => unreachable!("Unexpected state found in current states: {:?}", s),
-                }
-            }
+        let states: HashSet<usize> = [0].iter().cloned().collect();
 
-            current_states = next_states;
-            next_states = Vec::new();
-        }
+        let end_states: HashSet<usize> = text.chars().fold(states, |acc, c| {
+            acc.into_iter().map(|i| match self.instructions[i] {
+                Instruction::Literal(e) if e == c => self.expand_state(i + 1), 
+                _ => HashSet::new(),
+            }).flatten().collect()
+        });
 
-        for index in current_states.into_iter() {
-            if let Instruction::Match = self.instructions[index] {
-                return true
-            }
-        }
-
-        false
+        end_states.contains(&(self.instructions.len() - 1))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn compiles() {
         Regex::compile("abc|*.");
